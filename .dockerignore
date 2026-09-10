@@ -1,0 +1,11 @@
+.git
+.idea
+.venv
+.env
+__pycache__
+.pytest_cache
+.ruff_cache
+.coverage
+htmlcov
+*.egg-info
+order_management_api_TZ.md

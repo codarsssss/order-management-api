@@ -1,0 +1,83 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-orders}
+      POSTGRES_USER: ${POSTGRES_USER:-orders}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-development-only}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build: .
+    environment: &app_environment
+      POSTGRES_DB: ${POSTGRES_DB:-orders}
+      POSTGRES_USER: ${POSTGRES_USER:-orders}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-development-only}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      JWT_SECRET: ${JWT_SECRET:-local-development-only-replace-before-deploying}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+      APP_NAME: ${APP_NAME:-Order Management API}
+      DEBUG: ${DEBUG:-false}
+      CURRENCY_API_URL: ${CURRENCY_API_URL:-https://api.frankfurter.dev/v2}
+      CURRENCY_TIMEOUT_SECONDS: ${CURRENCY_TIMEOUT_SECONDS:-5}
+    command: [alembic, upgrade, head]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build: .
+    environment: *app_environment
+    ports:
+      - '127.0.0.1:${API_PORT:-8000}:8000'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -c, 'import urllib.request; urllib.request.urlopen("http://localhost:8000/health", timeout=2)']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  test-db:
+    profiles: [test]
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: orders_test
+      POSTGRES_USER: orders_test
+      POSTGRES_PASSWORD: isolated-test-only
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U orders_test -d orders_test]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  test:
+    profiles: [test]
+    build:
+      context: .
+      target: development
+    environment:
+      POSTGRES_DB: orders_test
+      POSTGRES_USER: orders_test
+      POSTGRES_PASSWORD: isolated-test-only
+      POSTGRES_HOST: test-db
+      POSTGRES_PORT: 5432
+      JWT_SECRET: isolated-tests-secret-at-least-32-characters
+    depends_on:
+      test-db:
+        condition: service_healthy
+    command: [sh, -c, 'alembic upgrade head && pytest -q --cov=app --cov-report=term-missing']
+
+volumes:
+  postgres_data:
